@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="tinyRenderHomework/tinyRenderHomework.vcxproj" Id="d2653f0b-2b66-4137-9d7e-b0317cd4c01e" />
+</Solution>
