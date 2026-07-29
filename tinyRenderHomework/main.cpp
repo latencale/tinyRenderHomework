@@ -2,132 +2,109 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include<limits>
 #include "model.h"
 #include "tgaimage.h"
+#include "geometry.h"
 
 constexpr int width = 800;
 constexpr int height = 800;
+constexpr vec3 eye{ -1,0,2 };//摄像机位置
+constexpr vec3 center{ 0,0,0 };//目标点
+constexpr vec3 up{ 0,1,0 };//向上方向，控制画面旋转
+constexpr double M_PI = 3.14159265358979323846;
 
 const TGAColor white = {255, 255, 255, 255};
 const TGAColor red = {0, 0, 255, 255};
 const TGAColor green = {0, 255, 0, 255};
 const TGAColor blue = {255, 0, 0, 255};
 
-// Bresenham 画线算法（整数版本）
-void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color) {
-    bool steep = std::abs(ax - bx) < std::abs(ay - by);
-    if (steep) {
-        std::swap(ax, ay);
-        std::swap(bx, by);
-    }
-    if (ax > bx) {
-        std::swap(ax, bx);
-        std::swap(ay, by);
-    }
-    
-    int dx = bx - ax;
-    int dy = std::abs(by - ay);
-    
-    if (dx == 0) {
-        // 垂直线
-        for (int y = std::min(ay, by); y <= std::max(ay, by); y++) {
-            if (steep)
-                framebuffer.set(y, ax, color);
-            else
-                framebuffer.set(ax, y, color);
-        }
-        return;
-    }
-    
-    int y = ay;
-    int error = 0;
-    int y_step = (by > ay) ? 1 : -1;
-    
-    for (int x = ax; x <= bx; x++) {
-        if (steep)
-            framebuffer.set(y, x, color);
-        else
-            framebuffer.set(x, y, color);
-        
-        error += 2 * dy;
-        if (error > dx) {
-            y += y_step;
-            error -= 2 * dx;
-        }
-    }
+mat<4,4> ModelView,Viewport,Perspective;//观察矩阵，视口矩阵，投影矩阵
+
+
+//旋转物体 局部坐标->世界坐标
+void lookat(const vec3 eye, const vec3 center, const vec3 up) {
+    vec3 n = normalized(eye - center);//前方向，-z
+    vec3 l = normalized(cross(up, n));//右方向，x
+    vec3 m = normalized(cross(n, l));//上方向，y
+    //(l,m,n)形成 相机的本地坐标系
+    ModelView = mat<4, 4>{ {{l.x,l.y,l.z,0}, {m.x,m.y,m.z,0}, {n.x,n.y,n.z,0}, {0,0,0,1}} } * //旋转：把世界轴对其到相机轴
+        mat<4, 4>{{{1, 0, 0, -center.x}, { 0,1,0,-center.y }, { 0,0,1,-center.z }, { 0,0,0,1 }}};//平移到原点
 }
 
-double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
-    return .5 * ((by - ay) * (bx + ax) + (cy - by) * (cx + bx) + (ay - cy) * (ax + cx));
+
+//透视投影:实现近大远小的透视效果  观察坐标->裁剪坐标
+void perspective(const double f) {//f相机的焦距：摄像机到摄影平面的距离
+    Perspective = { {{1,0,0,0},
+        {0,1,0,0},
+        {0,0,1,0},
+        {0,0, -1 / f,1}} };
 }
 
-void triangle(int ax, int ay,int az, int bx, int by,int bz ,int cx, int cy,int cz, TGAImage& framebuffer,TGAImage& zbuffer,TGAColor color) {
-    int bbminx = std::min(std::min(ax, bx), cx); // bounding box for the triangle
-    int bbminy = std::min(std::min(ay, by), cy); // defined by its top left and bottom right corners
-    int bbmaxx = std::max(std::max(ax, bx), cx);
-    int bbmaxy = std::max(std::max(ay, by), cy);
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-    //if (total_area < 1) return; // 背面剔除 + 丢弃覆盖面积小于一个像素的三角形
+// 视口变换（将 3D 坐标投影到屏幕） 裁剪坐标->屏幕坐标
+void viewport(const int x, const int y, const int w, const int h) {
+    Viewport = { {{w / 2.,0,0,x + w / 2.},//将x轴[-1,1]拉伸到宽度w，0，0，x轴平移到窗口中心
+        {0,h / 2.,0,y + h / 2.},//同理，y轴
+        {0,0,1,0},// 0，0，z轴不变，0
+        {0,0,0,1}} };
+}
+
+//光栅化
+void rasterize(const vec4 clip[3], std::vector<double>& zbuffer, TGAImage& framebuffer, const TGAColor color) {
+    //裁剪空间坐标clip，
+    vec4 ndc[3] = { clip[0] / clip[0].w, clip[1] / clip[1].w, clip[2] / clip[2].w };             
+    //归一化设备坐标ndc
+    vec2 screen[3] = { (Viewport * ndc[0]).xy(), (Viewport * ndc[1]).xy(), (Viewport * ndc[2]).xy() }; 
+    //屏幕坐标
+
+    mat<3, 3> ABC = { { {screen[0].x, screen[0].y, 1.}, {screen[1].x, screen[1].y, 1.}, {screen[2].x, screen[2].y, 1.} } };
+    //记录ABC的坐标
+    if (ABC.det() < 1) return; 
+    //背面剔除+面积小于 1 像素的微小三角形跳过
+
+    auto [bbminx, bbmaxx] = std::minmax({ screen[0].x, screen[1].x, screen[2].x }); //包围盒
+    auto [bbminy, bbmaxy] = std::minmax({ screen[0].y, screen[1].y, screen[2].y }); // 由 最小/最大 x 和 y 决定盒子长宽
 
 #pragma omp parallel for
-    for (int x = bbminx; x <= bbmaxx; x++) {
-        for (int y = bbminy; y <= bbmaxy; y++) {
-            double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
-            double beta = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
-            double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
-            if (alpha < 0 || beta < 0 || gamma < 0) continue; // negative barycentric coordinate => the pixel is outside the triangle
-            unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
-            if (z <= zbuffer.get(x, y)[0]) continue;//把深度存在B通道中，深度大于目前深度，跳过
-            framebuffer.set(x, y,color);
-            zbuffer.set(x, y, { z,z,z,255 });
+    for (int x = std::max<int>(bbminx, 0); x <= std::min<int>(bbmaxx, framebuffer.width() - 1); x++) { // 裁剪，不在视野里的像素不进行遍历
+        for (int y = std::max<int>(bbminy, 0); y <= std::min<int>(bbmaxy, framebuffer.height() - 1); y++) {
+            vec3 bc = ABC.invert_transpose() * vec3 { static_cast<double>(x), static_cast<double>(y), 1. }; // 计算重心坐标
+            if (bc.x < 0 || bc.y < 0 || bc.z < 0) continue; // 在 包围盒 外
+            double z = bc * vec3{ ndc[0].z, ndc[1].z, ndc[2].z };//深度
+            if (z <= zbuffer[x + y * framebuffer.width()]) continue;//深度大于当前深度，跳过
+            zbuffer[x + y * framebuffer.width()] = z;
+            framebuffer.set(x, y, color);
         }
     }
 }
-
-// 将 3D 坐标投影到屏幕
-std::tuple<int, int, int> project(const vec3& v) {//(x,y)是向量(x,y,z)的正交投影
-    return { (v.x + 1.) * width / 2, 
-        (v.y + 1.) * height / 2,
-        (v.z + 1.) * 255. / 2 };//将深度值z，映射到[0,255]，存储在 灰度图像 中
-}
-
-
 int main(int argc, char** argv) {
     if (argc != 2) {
         std::cerr << "用法: " << argv[0] << " <模型文件.obj>" << std::endl;
         return 1;
     }
     
-    Model model(argv[1]);
-    TGAImage framebuffer(width, height, TGAImage::RGB);
-    TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
+    lookat(eye, center, up); //观察矩阵
+    perspective(norm(eye - center)); //投影矩阵
+    viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8); //视口矩阵
 
-    if (model.nverts() == 0 || model.nfaces() == 0) {
-        std::cerr << "错误: 模型没有顶点或三角形数据" << std::endl;
-        return 1;
+    TGAImage framebuffer(width, height, TGAImage::RGB);
+    std::vector<double> zbuffer(width * height, -std::numeric_limits<double>::max());
+
+    for (int m = 1; m < argc; m++) { // 遍历每个输入的对象
+        Model model(argv[m]);
+        for (int i = 0; i < model.nfaces(); i++) { // 遍历所有三角形
+            vec4 clip[3];
+            for (int d : {0, 1, 2}) {            // assemble the primitive 组装图元
+                vec3 v = model.vert(i, d);
+                clip[d] = Perspective * ModelView * vec4{ v.x, v.y, v.z, 1. };
+            }
+            TGAColor rnd;
+            for (int c = 0; c < 3; c++) rnd[c] = std::rand() % 255;
+            rasterize(clip, zbuffer, framebuffer, rnd); // rasterize the primitive 光栅化
+        }
     }
     
-	// 绘制三角形并填充颜色
-    for (int i = 0; i < model.nfaces(); i++) {
-        auto [ax, ay,az] = project(model.vert(i, 0));
-        auto [bx, by,bz] = project(model.vert(i, 1));
-        auto [cx, cy,cz] = project(model.vert(i, 2));
-        
-        TGAColor rnd;
-        for (int c = 0; c < 3; c++) rnd[c] = std::rand() % 255;
-        triangle(ax, ay, az, bx, by, bz, cx, cy, cz, framebuffer,zbuffer,rnd);
-    }
-    
-    // 绘制顶点（用小点标记）
-    //for (int i = 0; i < model.nverts(); i++) {
-    //    auto [x, y] = project(model.vert(i));
-    //    // 画一个点
-    //    framebuffer.set(x, y, white);
-    //}
-        
     
     framebuffer.write_tga_file("framebuffer.tga");
-    zbuffer.write_tga_file("zbuffer.tga");
-    
     return 0;
 }
