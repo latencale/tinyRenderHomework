@@ -89,8 +89,8 @@ vec4 Model::normal(const vec2& uv) const {
 }
 
 vec2 Model::uv(const int iface, const int nthvert) const {
-     return tex[facet_tex[iface * 3 + nthvert]];
+    return tex[facet_tex[iface * 3 + nthvert]];
 }
-
 const TGAImage& Model::diffuse()  const { return diffusemap; }
 const TGAImage& Model::specular() const { return specularmap; }
+

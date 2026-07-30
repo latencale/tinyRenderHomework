@@ -40,6 +40,7 @@ struct PhongShader :IShader {
     }
 
     virtual std::pair<bool, TGAColor>fragment(const vec3 bar) const {//bar=(alpha,beta,gamma)
+        
         vec2 uv = varying_uv[0] * bar[0] + varying_uv[1] * bar[1] + varying_uv[2] * bar[2];//这个像素的纹理
         vec4 n = normalized(ModelView.invert_transpose() * model.normal(uv));
         vec4 r = normalized(2 * n * (n * l) - l);
