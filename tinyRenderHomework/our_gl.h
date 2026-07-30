@@ -8,8 +8,12 @@ void init_viewport(const int x, const int y, const int w, const int h);
 void init_zbuffer(const int width, const int height);
 
 struct IShader {
+    static TGAColor sample2D(const TGAImage& img, const vec2& uvf) {
+        return img.get(uvf[0] * img.width(), uvf[1] * img.height());
+        //得到uv坐标处的颜色
+    }
     virtual std::pair<bool, TGAColor> fragment(const vec3 bar) const = 0;
 };
 
-typedef vec4 Triangle[3]; // a triangle primitive is made of three ordered points
+typedef vec4 Triangle[3]; // 一个三角形由三个点组成
 void rasterize(const Triangle& clip, const IShader& shader, TGAImage& framebuffer);
