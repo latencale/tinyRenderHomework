@@ -4,7 +4,7 @@
 mat<4, 4> ModelView, Viewport, Perspective;//观察矩阵，视口矩阵，投影矩阵
 std::vector<double> zbuffer;
 
-//旋转物体 局部坐标->世界坐标
+//旋转物体 局部坐标->世界坐标->观察坐标（相机视角）
 void lookat(const vec3 eye, const vec3 center, const vec3 up) {
     vec3 n = normalized(eye - center);//前方向，-z
     vec3 l = normalized(cross(up, n));//右方向，x
@@ -23,7 +23,8 @@ void init_perspective(const double f) {//f相机的焦距：摄像机到摄影�
         {0,0, -1 / f,1}} };
 }
 
-// 视口变换（将 3D 坐标投影到屏幕） 裁剪坐标->屏幕坐标
+// 视口变换：将 NDC 坐标映射到屏幕像素坐标
+// NDC 范围：[-1, 1] → 屏幕范围：[x, x+w] × [y, y+h]
 void init_viewport(const int x, const int y, const int w, const int h) {
     Viewport = { {{w / 2.,0,0,x + w / 2.},//将x轴[-1,1]拉伸到宽度w，0，0，x轴平移到窗口中心
         {0,h / 2.,0,y + h / 2.},//同理，y轴
