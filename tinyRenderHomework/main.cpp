@@ -26,27 +26,26 @@ extern std::vector<double> zbuffer;     // the depth buffer
 
 struct PhongShader :IShader {
     const Model& model;
-    TGAColor color = {  };
-    vec3 l;//光照方向
-    vec3 tri[3];
+    vec4 l;//光照方向
+    vec2 varying_uv[3];//纹理贴图坐标
 
     PhongShader(const Model & m,const vec3 light):model(m){
-        l = normalized((ModelView * vec4{ light.x,light.y,light.z,0. }).xyz());
+        l = normalized(ModelView * vec4{ light.x,light.y,light.z,0. });
     }
 
-    virtual vec4 vertex(const int face, const int vert) {
-        vec3 v = model.vert(face, vert);
-        vec4 gl_Position = ModelView * vec4(v.x, v.y,v.z, 1.);
-        tri[vert] = gl_Position.xyz();
+    virtual vec4 vertex(const int face, const int vert) {//第face个三角形的第vert个点
+        varying_uv[vert] = model.uv(face, vert);
+        vec4 gl_Position = ModelView * model.vert(face, vert);
         return Perspective * gl_Position;
     }
 
-    virtual std::pair<bool, TGAColor>fragment(const vec3 bar) const {
+    virtual std::pair<bool, TGAColor>fragment(const vec3 bar) const {//bar=(alpha,beta,gamma)
         TGAColor gl_FragColor = { 255,255,255,255 };
         
-        vec3 n = normalized(cross(tri[1] - tri[0], tri[2] - tri[0]));//法线
-        vec3 r = normalized(n * (n * l) * 2 - l);//反射向量
-        
+        vec2 uv = varying_uv[0] * bar[0] + varying_uv[1] * bar[1] + varying_uv[2] * bar[2];//这个像素的纹理
+        vec4 n = normalized(ModelView.invert_transpose() * model.normal(uv));
+        vec4 r = normalized(2 * n * (n * l) - l);
+
         double ambient = .3;//环境光强度
         double diff = std::max(0., n * l);//漫反射光强度
         double spec = std::pow(std::max(r.z, 0.), 35);//镜面反射光强度
@@ -72,14 +71,14 @@ int main(int argc, char** argv) {
     init_viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8); //视口矩阵
     init_zbuffer(width, height);
     TGAImage framebuffer(width, height, TGAImage::RGB,{177,195,109,255});
-    //std::vector<double> zbuffer(width * height, -std::numeric_limits<double>::max());
 
     for (int m = 1; m < argc; m++) { // 遍历每个输入的对象
         Model model(argv[m]);
         PhongShader shader(model,light);
         for (int f = 0; f < model.nfaces(); f++) { // 遍历所有三角形
-            //shader.color = { random_byte() ,random_byte(),random_byte(),255};
-            Triangle clip = { shader.vertex(f,0),shader.vertex(f,1),shader.vertex(f,2) };
+            Triangle clip = { shader.vertex(f,0),
+                shader.vertex(f,1),
+                shader.vertex(f,2) };
             rasterize(clip, shader, framebuffer); // rasterize the primitive 光栅化
         }
     }

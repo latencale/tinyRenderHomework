@@ -1,76 +1,91 @@
-// model.cpp
-#include "model.h"
 #include <fstream>
 #include <sstream>
-#include <iostream>
-#include<algorithm>
+#include "model.h"
+#include "tgaimage.h"
 
-Model::Model(const std::string& filename) {
-    std::ifstream in(filename);
-    if (in.fail()) {
-        std::cerr << "无法打开文件: " << filename << std::endl;
-        return;
-    }
+Model::Model(const std::string filename) {
+    std::ifstream in;
+    in.open(filename, std::ifstream::in);
+
+    if (in.fail()) return;
 
     std::string line;
-    while (std::getline(in, line)) {
-        if (line.empty()) continue;
+    while (!in.eof()) {
+        std::getline(in, line);
+        std::istringstream iss(line.c_str());
+        char trash;
 
-        std::istringstream iss(line);
-        char prefix;
-        iss >> prefix;
-
-        if (prefix == 'v') {
-            // 解析顶点: v x y z
-            vec3 v;
-            iss >> v.x >> v.y >> v.z;
+        if (!line.compare(0, 2, "v ")) {//顶点坐标
+            iss >> trash;
+            vec4 v = { 0,0,0,1 };
+            for (int i : {0, 1, 2}) iss >> v[i];
             verts.push_back(v);
         }
-        else if (prefix == 'f') {
-            // 解析面: f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3
-            std::string token;
-            int cnt = 0;
-
-            while (iss >> token) {
-                // 提取顶点索引（忽略 / 后面的纹理和法线）
-                size_t pos = token.find('/');
-                int idx;
-				if (pos != std::string::npos) {//npos超出范围，未找到
-                    idx = std::stoi(token.substr(0, pos));
-                }
-                else {
-                    idx = std::stoi(token);
-                }
-                facet_vrt.push_back(idx - 1);  // OBJ 索引从 1 开始
+        else if (!line.compare(0, 3, "vn ")) {//顶点法线
+            iss >> trash >> trash;
+            vec4 vn;
+            for (int i : {0, 1, 2}) iss >> vn[i];
+            norms.push_back(normalized(vn));
+        }
+        else if (!line.compare(0,3,"vt ") ){//纹理坐标
+            iss>>trash>>trash;
+            vec2 uv;
+            for(int i:{0,1}) 
+                iss>>uv[i];
+            tex.push_back({uv.x,1-uv.y});
+        }
+        else if (!line.compare(0, 2, "f ")) {//三角形
+            int f, t, n, cnt = 0;
+            iss >> trash;
+            while (iss >> f >> trash >> t >> trash >> n) {
+                facet_vrt.push_back(--f);
+                facet_tex.push_back(--t);
+                facet_nrm.push_back(--n);
                 cnt++;
             }
-
-            if (cnt != 3) {
-                std::cerr << "错误: OBJ 文件必须包含三角形（当前面有 " << cnt << " 个顶点）" << std::endl;
+            if (3 != cnt) {
+                std::cerr << "Error: the obj file is supposed to be triangulated" << std::endl;
                 return;
             }
         }
     }
+    std::cerr << "# v# " << nverts() << " f# " << nfaces() << std::endl;
+    
+    //加载与模型文件同名的纹理贴图
+    auto load_texture = [&filename](const std::string suffix, TGAImage& img) {
+        size_t dot = filename.find_last_of('.');//找到最后一个'.'
+        if (dot == std::string::npos) return;
 
-    in.close();
-    std::cerr << "加载完成: " << nverts() << " 个顶点, " << nfaces() << " 个三角形" << std::endl;
+        //构造纹理文件名：文件名前缀+后缀
+        std::string texfile = filename.substr(0, dot) + suffix;
+        //加载+打印结果
+        std::cerr << "texture file " << texfile << " loading " << (img.read_tga_file(texfile.c_str()) ? " ok" : " failed") << std::endl;
+    };
+    //调用：加载法线贴图
+    load_texture("_nm.tga",normalmap);
+}
 
-    //std::vector<int> idx(nfaces());
-    //for (int i = 0;i < nfaces();i++) {
-    //    idx[i] = i;
-    //}
+int Model::nverts() const { return verts.size(); }
+int Model::nfaces() const { return facet_vrt.size() / 3; }
 
-    //std::sort(idx.begin(), idx.end(),
-    //    [&](const int& a, const int& b) {
-    //        float aminz = std::min(vert(a, 0).z, std::min(vert(a, 1).z, vert(a, 2).z));
-    //        float bminz = std::min(vert(b, 0).z, std::min(vert(b, 1).z, vert(b, 2).z));
-    //        return aminz < bminz;
-    //    });
+vec4 Model::vert(const int i) const {
+    return verts[i];
+}
 
-    //std::vector<int> facet_vrt2(nfaces() * 3); // allocate an array to store permutated facets
-    //for (int i = 0; i < nfaces(); i++)           // for each (new) facet
-    //    for (int j = 0; j < 3; j++)              // copy its three vertices from the old array
-    //        facet_vrt2[i * 3 + j] = facet_vrt[idx[i] * 3 + j];
+vec4 Model::vert(const int iface, const int nthvert) const {
+    return verts[facet_vrt[iface * 3 + nthvert]];
+}
 
-    //facet_vrt = facet_vrt2;                  // store the sorted triangles
+vec4 Model::normal(const int iface, const int nthvert) const {
+    return norms[facet_nrm[iface * 3 + nthvert]];
+}
+
+//从法线贴图中采样，并将RGB颜色值解码为3D法线
+vec4 Model::normal(const vec2& uv) const {
+    TGAColor c = normalmap.get(uv[0] * normalmap.width(), uv[1] * normalmap.height());
+    return vec4{ (double)c[2],(double)c[1],(double)c[0],0 } * 2. / 255. - vec4{ 1,1,1,0 };
+}
+
+vec2 Model::uv(const int iface, const int nthvert) const {
+     return tex[facet_tex[iface * 3 + nthvert]];
 }
