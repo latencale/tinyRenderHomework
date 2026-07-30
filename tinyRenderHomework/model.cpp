@@ -63,7 +63,7 @@ Model::Model(const std::string filename) {
     };
     //调用：加载法线贴图
     load_texture("_diffuse.tga", diffusemap);
-    load_texture("_nm.tga",normalmap);
+    load_texture("_nm_tangent.tga",normalmap);
     load_texture("_spec.tga", specularmap);
 }
 
@@ -85,7 +85,7 @@ vec4 Model::normal(const int iface, const int nthvert) const {
 //从法线贴图中采样，并将RGB颜色值解码为3D法线
 vec4 Model::normal(const vec2& uv) const {
     TGAColor c = normalmap.get(uv[0] * normalmap.width(), uv[1] * normalmap.height());
-    return vec4{ (double)c[2],(double)c[1],(double)c[0],0 } * 2. / 255. - vec4{ 1,1,1,0 };
+    return normalized(vec4{ (double)c[2],(double)c[1],(double)c[0],0 } * 2. / 255. - vec4{ 1,1,1,0 });
 }
 
 vec2 Model::uv(const int iface, const int nthvert) const {

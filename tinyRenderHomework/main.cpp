@@ -28,6 +28,8 @@ struct PhongShader :IShader {
     const Model& model;
     vec4 l;//光照方向
     vec2 varying_uv[3];//纹理贴图坐标
+    vec4 varying_nrm[3];//三角形的法向量
+    vec4 tri[3];//三角形坐标点
 
     PhongShader(const Model & m,const vec3 light):model(m){
         l = normalized(ModelView * vec4{ light.x,light.y,light.z,0. });
@@ -35,15 +37,26 @@ struct PhongShader :IShader {
 
     virtual vec4 vertex(const int face, const int vert) {//第face个三角形的第vert个点
         varying_uv[vert] = model.uv(face, vert);
+        varying_nrm[vert] = ModelView.invert_transpose() * model.normal(face, vert);
         vec4 gl_Position = ModelView * model.vert(face, vert);
+        tri[vert] = gl_Position;
+        //分别得到uv,法线,三角形在观察空间的坐标
         return Perspective * gl_Position;
     }
 
     virtual std::pair<bool, TGAColor>fragment(const vec3 bar) const {//bar=(alpha,beta,gamma)
-        
-        vec2 uv = varying_uv[0] * bar[0] + varying_uv[1] * bar[1] + varying_uv[2] * bar[2];//这个像素的纹理
-        vec4 n = normalized(ModelView.invert_transpose() * model.normal(uv));
-        vec4 r = normalized(2 * n * (n * l) - l);
+        //将法线贴图中的法线从切线空间转换到世界空间
+        mat<2, 4> E = { tri[1] - tri[0],tri[2] - tri[0] };//三角形的两条边（世界空间）
+        mat<2, 2> U = { varying_uv[1] - varying_uv[0],varying_uv[2] - varying_uv[0] };//三角形的两条边（uv空间）
+        mat<2, 4> T = U.invert() * E;
+        mat<4, 4> D = { normalized(T[0]),//切线向量(tangent)
+                    normalized(T[1]),//副切线向量(bitangent)
+                    normalized(varying_nrm[0] * bar[0] + varying_nrm[1] * bar[1] + varying_nrm[2] * bar[2]),//法线
+                    {0,0,0,1} };
+
+        vec2 uv = varying_uv[0] * bar[0] + varying_uv[1] * bar[1] + varying_uv[2] * bar[2];//这个像素的纹理坐标
+        vec4 n = normalized(D.transpose() * model.normal(uv));//法线
+        vec4 r = normalized(2 * n * (n * l) - l);//反射光
 
         double ambient = .4;//环境光强度
         double diffuse = 1.*std::max(0., n * l);//漫反射光强度
