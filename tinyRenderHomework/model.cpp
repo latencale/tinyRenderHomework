@@ -63,6 +63,7 @@ Model::Model(const std::string filename) {
     };
     //调用：加载法线贴图
     load_texture("_diffuse.tga", diffusemap);
+    //load_texture("_glow.tga,diffusemap");
     load_texture("_nm_tangent.tga",normalmap);
     load_texture("_spec.tga", specularmap);
 }

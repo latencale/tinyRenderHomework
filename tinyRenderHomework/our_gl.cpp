@@ -56,11 +56,14 @@ void rasterize(const Triangle& clip, const IShader &shader, TGAImage& framebuffe
 #pragma omp parallel for
     for (int x = std::max<int>(bbminx, 0); x <= std::min<int>(bbmaxx, framebuffer.width() - 1); x++) { // 裁剪，不在视野里的像素不进行遍历
         for (int y = std::max<int>(bbminy, 0); y <= std::min<int>(bbmaxy, framebuffer.height() - 1); y++) {
-            vec3 bc = ABC.invert_transpose() * vec3 { static_cast<double>(x), static_cast<double>(y), 1. }; // 计算重心坐标
-            if (bc.x < 0 || bc.y < 0 || bc.z < 0) continue; // 在 包围盒 外
-            double z = bc * vec3{ ndc[0].z, ndc[1].z, ndc[2].z };//深度
+            vec3 bc_screen = ABC.invert_transpose() * vec3 { static_cast<double>(x), static_cast<double>(y), 1. }; // 屏幕空间的重心坐标
+            vec3 bc_clip = { bc_screen.x / clip[0].w,bc_screen.x / clip[1].w,bc_screen.x / clip[2].w };//裁剪空间的重心坐标
+            bc_clip = bc_clip / (bc_clip.x + bc_clip.y + bc_clip.z);//归一化
+            //bc_clip校正透视
+            if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue; // 在 包围盒 外
+            double z = bc_screen * vec3{ ndc[0].z, ndc[1].z, ndc[2].z };//深度
             if (z <= zbuffer[x + y * framebuffer.width()]) continue;//深度大于当前深度，跳过
-            auto [discard, color] = shader.fragment(bc);
+            auto [discard, color] = shader.fragment(bc_clip);//
             if (discard) continue;
             zbuffer[x + y * framebuffer.width()] = z;
             framebuffer.set(x, y, color);

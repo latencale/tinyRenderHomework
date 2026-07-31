@@ -47,3 +47,8 @@ private:
     std::vector<std::uint8_t> data = {};
 };
 
+inline uint8_t to_byte(double val) {
+    if (val < 0.0) return 0;
+    if (val > 255.0) return 255;
+    return static_cast<uint8_t>(val);
+}
