@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include<limits>
+#include<random>
 #include "model.h"
 #include "tgaimage.h"
 #include "geometry.h"
@@ -62,7 +63,7 @@ extern std::vector<double> zbuffer;     // 摄像机视角 的 深度缓冲
 //        return {false, gl_FragColor};
 //    }
 //};
-struct EmptyShader :IShader {
+struct EmptyShader :IShader {//空着色器
     const Model& model;
     EmptyShader(const Model& m) :model(m) {}
 
@@ -77,9 +78,6 @@ struct EmptyShader :IShader {
     }
 };
 
-uint8_t A(int x) {
-    return (uint8_t)x;
-}
 int main(int argc, char** argv) {
     if (argc != 2) {
         std::cerr << "用法: " << argv[0] << " <模型文件.obj>" << std::endl;
@@ -88,60 +86,18 @@ int main(int argc, char** argv) {
 
     constexpr int width = 800;
     constexpr int height = 800;
-    constexpr int shadoww = 2000;
-    constexpr int shadowh = 2000;
+    constexpr int shadoww = 1000;
+    constexpr int shadowh = 1000;
     constexpr vec3 light = { 1,1,1 };//环境光
     constexpr vec3 eye{ -1,0,2 };//摄像机位置
     constexpr vec3 center{ 0,0,0 };//目标点
     constexpr vec3 up{ 0,1,0 };//向上方向，控制画面旋转
 
     
-    //lookat(eye, center, up); //观察矩阵
-    //init_perspective(norm(eye - center)); //投影矩阵
-    //init_viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8); //视口矩阵
-    //init_zbuffer(width, height);
-    //TGAImage framebuffer(width, height, TGAImage::RGB,{177,195,109,255});
-
-    //for (int m = 1; m < argc; m++) { // 遍历每个输入的对象
-    //    Model model(argv[m]);
-    //    PhongShader shader(model,light);
-    //    for (int f = 0; f < model.nfaces(); f++) { // 遍历所有三角形
-    //        Triangle clip = { shader.vertex(f,0),
-    //            shader.vertex(f,1),
-    //            shader.vertex(f,2) };
-    //        rasterize(clip, shader, framebuffer); // rasterize the primitive 光栅化
-    //    }
-    //}
-    //framebuffer.write_tga_file("framebuffer.tga");
-
-    std::vector<double>zshadow;//光源的深度缓冲
-    mat<4, 4> ShadowMatrix;
-    { // 阴影渲染通道
-        lookat(light, center, up);
-        init_perspective(norm(eye - center));
-        init_viewport(shadoww / 16, shadowh / 16, shadoww * 7 / 8, shadowh * 7 / 8);
-        init_zbuffer(shadoww, shadowh);
-        TGAImage framebuffer(shadoww, shadowh, TGAImage::RGB, { 177, 195, 209, 255 });
-
-        for (int m = 1; m < argc; m++) {                   
-            Model model(argv[m]);                       
-            EmptyShader shader{ model };
-            for (int f = 0; f < model.nfaces(); f++) {    
-                Triangle clip = { shader.vertex(f, 0),  
-                                  shader.vertex(f, 1),
-                                  shader.vertex(f, 2) };
-                rasterize(clip, shader, framebuffer);   
-            }
-        }
-        zshadow = zbuffer; //保存光源的深度缓冲
-        ShadowMatrix = Viewport * Perspective * ModelView;//合成光源的MVP矩阵
-        framebuffer.write_tga_file("shadowmap.tga");//阴影贴图：从光源角度拍一张“深度照片”
-    }
-
-    //常规渲染通道：摄像机处
-    lookat(eye, center, up);
-    init_perspective(norm(eye - center));
-    init_viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8);
+    //常规渲染通道：摄像机处 
+    lookat(eye, center, up); //观察矩阵
+    init_perspective(norm(eye - center)); //投影矩阵
+    init_viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8); //视口矩阵
     init_zbuffer(width, height);
     TGAImage framebuffer(width, height, TGAImage::RGB, { 177, 195, 209, 255 });
 
@@ -157,23 +113,81 @@ int main(int argc, char** argv) {
     }
     framebuffer.write_tga_file("framebuffer.tga");
 
-    // 后处理1:添加阴影效果
-#pragma omp parallel for
-    for (int x = 0; x < width; x++) {
-        for (int y = 0; y < height; y++) {
-            vec4 fragment = (Viewport * Perspective * ModelView).invert() * vec4 { (double)x, (double)y, zbuffer[x + y * width], 1. };
-            //在当前像素从屏幕坐标反推回3D世界坐标，得到当前像素的世界坐标
-            vec4 q = ShadowMatrix * fragment;//在光源视角下的齐次坐标
-            vec3 p = q.xyz() / q.w;//归一化得到 NDC坐标
-            if (p.x < 0 || p.x >= shadoww || p.y < 0 || p.y >= shadowh) continue;
-            if (p.z < zshadow[int(p.x) + int(p.y) * shadoww] - .03) { // 阴影偏移，防止Z-fighting
-                TGAColor c = framebuffer.get(x, y);
-                framebuffer.set(x, y, { A(c[0] / 2), A(c[1] / 2), A(c[2] / 2), c[3] });
+
+    // 阴影渲染通道
+    std::vector<double> mask(width * height, 0);//遮罩图
+    std::vector<double> zbuffer_copy = zbuffer;//赋值深度缓冲
+    mat<4, 4> M = (Viewport * Perspective * ModelView).invert();//MVP逆矩阵：屏幕坐标到世界坐标
+    mat<4, 4> N = Viewport * Perspective * ModelView;
+
+    std::mt19937 gen(std::random_device{}());//随机数生成器
+    std::uniform_real_distribution<double> dist(0.0, 1.0);//生成[0,1)的随机数
+    constexpr int n = 10;
+
+    auto smoothstep = [](double edge0, double edge1, double x) {         // 平滑插值函数
+        double t = std::clamp((x - edge0) / (edge1 - edge0), 0., 1.);  
+        return t * t * (3 - 2 * t);  // Hermite 插值：两边平滑，中间陡
+        };
+
+    for (int i = 0; i < n; ++i) {//OA环境光遮蔽
+        std::cerr << i << std::endl;
+        double y = dist(gen);//随机数，高度
+        double theta = 2.0 * M_PI * dist(gen);//水平旋转角度
+        double r = std::sqrt(1.0 - y * y);//水平半径
+        vec3 light = vec3{ r * std::cos(theta), y, r * std::sin(theta) } * 1.5;//光源坐标
+
+        std::cout << "v " << light << std::endl;//输出光照角度
+
+        lookat(light, center, up);//相机放在light位置，朝向原点
+        ModelView[3][3] = norm(light - center);//相机到物体距离
+        init_perspective(norm(eye - center));
+        init_viewport(shadoww / 16, shadowh / 16, shadoww * 7 / 8, shadowh * 7 / 8);
+        init_zbuffer(shadoww, shadowh);
+        TGAImage trash(shadoww, shadowh, TGAImage::RGB, { 177, 195, 209, 255 });
+
+        for (int m = 1; m < argc; m++) {                    // iterate through all input objects
+            Model model(argv[m]);                       // load the data
+            EmptyShader shader{ model };
+            for (int f = 0; f < model.nfaces(); f++) {      // iterate through all facets
+                Triangle clip = { shader.vertex(f, 0),  // assemble the primitive
+                    shader.vertex(f, 1),
+                    shader.vertex(f, 2) };
+                rasterize(clip, shader, trash);         // rasterize the primitive
+            }
+        }
+        //trash.write_tga_file(std::string("shadowmap") + std::to_string(i) + std::string(".tga"));
+
+
+        // 后处理1:添加阴影效果
+    #pragma omp parallel for
+        for (int x = 0; x < width; x++) {
+            for (int y = 0; y < height; y++) {
+                vec4 fragment = M * vec4{ (double)x, (double)y, zbuffer_copy[x + y * width], 1. };
+                //在当前像素从屏幕坐标反推回3D世界坐标，得到当前像素的世界坐标
+                vec4 q = N * fragment;//在光源视角下的齐次坐标
+                vec3 p = q.xyz() / q.w;//归一化得到 NDC坐标
+                double lit = (fragment.z < -100 ||//当前光照下是否该被照亮        // 背景
+                    (p.x >= 0 && p.x < shadoww && p.y >= 0 && p.y < shadowh &&    // 非边界
+                        (p.z > zbuffer[int(p.x) + int(p.y) * shadoww] - .03)));   // 可视
+                mask[x + y * width] += (lit - mask[x + y * width]) / (i + 1.);
+                //“指数移动平均”滤波，实现多光源累计阴影效果，或渐进式平滑
+                //新平均值 = 旧平均值 + (新样本 - 旧平均值) / (已处理样本数 + 1)
             }
         }
     }
 
+
+//后处理1：应用阴影效果
+#pragma omp parallel for
+    for (int x = 0; x < width; x++) {
+        for (int y = 0; y < height; y++) {
+            double m = smoothstep(-1,1.,mask[x + y * width]);
+            TGAColor c = framebuffer.get(x, y);
+            framebuffer.set(x, y, { to_byte(c[0] * m),to_byte(c[1] * m), to_byte(c[2] * m), c[3] });
+        }
+    }
     framebuffer.write_tga_file("shadow.tga");
+
 
     //后处理2：边缘检测 并画成黑色 ，使用Sobel算子 
     constexpr double threshold = .15;//敏感度阈值：像素深度变化>0.15，则为边缘
@@ -185,7 +199,7 @@ int main(int argc, char** argv) {
                     constexpr int Gx[3][3] = { {-1,0,1},{-2,0,2},{-1,0,1} };
                     constexpr int Gy[3][3] = { {-1,-2,-1},{0,0,0},{1,2,1} };
                     //定义Sobel卷积核，水平方向 和 垂直方向
-                    sum = sum + vec2{ Gx[j + 1][i + 1] * zbuffer[x + i + (y + j) * width],Gy[j + 1][i + 1] * zbuffer[x + i + (y + j) * width] };
+                    sum = sum + vec2{ Gx[j + 1][i + 1] * zbuffer_copy[x + i + (y + j) * width],Gy[j + 1][i + 1] * zbuffer_copy[x + i + (y + j) * width] };
                 }
             }
             if (norm(sum) > threshold)
