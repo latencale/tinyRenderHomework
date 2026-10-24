@@ -249,7 +249,7 @@ int main(int argc, char** argv) {
             double ssao = smoothstep(0, 1, 1 - ratio * ao_strength);  // 遮挡比例越大 -> 越暗
             TGAColor c = framebuffer.get(x, y);
             framebuffer.set(x, y, { to_byte(c[0] * ssao), to_byte(c[1] * ssao), to_byte(c[2] * ssao), c[3] });
-            aoimg.set(x, y, { to_byte(ssao) });
+            aoimg.set(x, y, { to_byte(ssao * 255.) });  // 注意 to_byte 只做 clamp 不缩放，需先乘 255
         }
     }
     framebuffer.write_tga_file("output/ssao.tga");

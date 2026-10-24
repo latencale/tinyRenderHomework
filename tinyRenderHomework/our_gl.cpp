@@ -57,7 +57,7 @@ void rasterize(const Triangle& clip, const IShader &shader, TGAImage& framebuffe
     for (int x = std::max<int>(bbminx, 0); x <= std::min<int>(bbmaxx, framebuffer.width() - 1); x++) { // 裁剪，不在视野里的像素不进行遍历
         for (int y = std::max<int>(bbminy, 0); y <= std::min<int>(bbmaxy, framebuffer.height() - 1); y++) {
             vec3 bc_screen = ABC.invert_transpose() * vec3 { static_cast<double>(x), static_cast<double>(y), 1. }; // 屏幕空间的重心坐标
-            vec3 bc_clip = { bc_screen.x / clip[0].w,bc_screen.x / clip[1].w,bc_screen.x / clip[2].w };//裁剪空间的重心坐标
+            vec3 bc_clip = { bc_screen.x / clip[0].w, bc_screen.y / clip[1].w, bc_screen.z / clip[2].w };//裁剪空间的重心坐标
             bc_clip = bc_clip / (bc_clip.x + bc_clip.y + bc_clip.z);//归一化
             //bc_clip校正透视
             if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue; // 在 包围盒 外
