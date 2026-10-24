@@ -4,6 +4,7 @@
 #include <algorithm>
 #include<limits>
 #include<filesystem>
+#include<random>
 #include "model.h"
 #include "tgaimage.h"
 #include "geometry.h"
@@ -207,6 +208,47 @@ int main(int argc, char** argv) {
         }
     }
     framebuffer.write_tga_file("output/shadow.tga");
+
+    // 后处理2：屏幕空间环境光遮蔽 SSAO
+    // 注意：必须读 zbuffer_copy（相机视角 800x800），不能读 zbuffer
+    //       —— zbuffer 已经被上面的阴影通道 init_zbuffer(shadoww, shadowh) 换成了 2000x2000
+    constexpr double ao_radius = .1;        // 采样半径（NDC 空间单位）
+    constexpr int nsamples = 128;           // 每个像素的采样点数量
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<double> dist(-ao_radius, ao_radius);
+
+    auto smoothstep = [](double edge0, double edge1, double x) {  // 平滑插值：两端缓、中间陡
+        double t = std::clamp((x - edge0) / (edge1 - edge0), 0., 1.);
+        return t * t * (3 - 2 * t);
+        };
+
+    const mat<4, 4> ViewportInv = Viewport.invert();  // 提到循环外，避免每个像素都求一次逆
+
+    // TODO: 这里的循环尚未并行化。若要加 #pragma omp parallel for，
+    //       必须为每个线程单独创建 mt19937，否则多个线程共用同一个引擎会产生数据竞争。
+    for (int x = 0; x < width; x++) {
+        for (int y = 0; y < height; y++) {
+            double z = zbuffer_copy[x + y * width];
+            if (z < -100) continue;  // 背景跳过
+            vec4 fragment = ViewportInv * vec4{ (double)x, (double)y, z, 1. };  // 屏幕坐标 -> NDC
+            double vote = 0;    // 被遮挡的采样点数量
+            double voters = 0;  // 有效采样点数量
+            for (int i = 0; i < nsamples; i++) {
+                vec4 p = Viewport * (fragment + vec4{ dist(gen), dist(gen), dist(gen), 0. });  // 采样点投影回屏幕
+                if (p.x < 0 || p.x >= width || p.y < 0 || p.y >= height) continue;  // 出界的采样点不计入
+                double d = zbuffer_copy[int(p.x) + int(p.y) * width];
+                if (z + 5 * ao_radius < d) continue;  // 深度差过大，不算同一片遮蔽体
+                voters++;
+                vote += d > p.z;  // 该处深度更靠近相机 -> 采样点被遮挡
+            }
+            double ratio = voters > 0 ? vote / voters : 0.;  // 防除零
+            double ssao = smoothstep(0, 1, 1 - ratio * .4);  // 遮挡比例越大 -> 越暗
+            TGAColor c = framebuffer.get(x, y);
+            framebuffer.set(x, y, { to_byte(c[0] * ssao), to_byte(c[1] * ssao), to_byte(c[2] * ssao), c[3] });
+        }
+    }
+    framebuffer.write_tga_file("output/ssao.tga");
 
     return 0;
 }
