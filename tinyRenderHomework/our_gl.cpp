@@ -4,7 +4,7 @@
 mat<4, 4> ModelView, Viewport, Perspective;//观察矩阵，视口矩阵，投影矩阵
 std::vector<double> zbuffer;
 
-//旋转物体 局部坐标->世界坐标->观察坐标（相机视角）
+//视图变换：局部坐标->世界坐标->观察坐标（相机视角）
 void lookat(const vec3 eye, const vec3 center, const vec3 up) {
     vec3 n = normalized(eye - center);//前方向，-z
     vec3 l = normalized(cross(up, n));//右方向，x
@@ -15,7 +15,7 @@ void lookat(const vec3 eye, const vec3 center, const vec3 up) {
 }
 
 
-//透视投影:实现近大远小的透视效果  观察坐标->裁剪坐标
+//透视变换:实现近大远小的透视效果  观察坐标->裁剪坐标
 void init_perspective(const double f) {//f相机的焦距：摄像机到摄影平面的距离
     Perspective = { {{1,0,0,0},
         {0,1,0,0},
