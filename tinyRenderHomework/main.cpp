@@ -213,7 +213,9 @@ int main(int argc, char** argv) {
     // 注意：必须读 zbuffer_copy（相机视角 800x800），不能读 zbuffer
     //       —— zbuffer 已经被上面的阴影通道 init_zbuffer(shadoww, shadowh) 换成了 2000x2000
     constexpr double ao_radius = .1;        // 采样半径（NDC 空间单位）
+    constexpr double ao_strength = .7;      // 遮蔽强度：0=关闭，越大缝隙越暗（原版为 .4，偏弱）
     constexpr int nsamples = 128;           // 每个像素的采样点数量
+    TGAImage aoimg(width, height, TGAImage::GRAYSCALE);  // 单独的 AO 系数图，便于调试与展示
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_real_distribution<double> dist(-ao_radius, ao_radius);
@@ -238,17 +240,20 @@ int main(int argc, char** argv) {
                 vec4 p = Viewport * (fragment + vec4{ dist(gen), dist(gen), dist(gen), 0. });  // 采样点投影回屏幕
                 if (p.x < 0 || p.x >= width || p.y < 0 || p.y >= height) continue;  // 出界的采样点不计入
                 double d = zbuffer_copy[int(p.x) + int(p.y) * width];
+                if (d < -100) continue;  // 采样点落在背景上：不计入 voters，否则无效采样会稀释遮挡比例
                 if (z + 5 * ao_radius < d) continue;  // 深度差过大，不算同一片遮蔽体
                 voters++;
                 vote += d > p.z;  // 该处深度更靠近相机 -> 采样点被遮挡
             }
             double ratio = voters > 0 ? vote / voters : 0.;  // 防除零
-            double ssao = smoothstep(0, 1, 1 - ratio * .4);  // 遮挡比例越大 -> 越暗
+            double ssao = smoothstep(0, 1, 1 - ratio * ao_strength);  // 遮挡比例越大 -> 越暗
             TGAColor c = framebuffer.get(x, y);
             framebuffer.set(x, y, { to_byte(c[0] * ssao), to_byte(c[1] * ssao), to_byte(c[2] * ssao), c[3] });
+            aoimg.set(x, y, { to_byte(ssao) });
         }
     }
     framebuffer.write_tga_file("output/ssao.tga");
+    aoimg.write_tga_file("output/ao.tga");  // 灰度 AO 系数图（黑=完全遮蔽）
 
     return 0;
 }
