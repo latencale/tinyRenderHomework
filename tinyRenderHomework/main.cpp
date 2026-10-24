@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include<limits>
+#include<filesystem>
 #include "model.h"
 #include "tgaimage.h"
 #include "geometry.h"
@@ -140,8 +141,9 @@ int main(int argc, char** argv) {
             rasterize(clip, shader, framebuffer); // rasterize the primitive 光栅化
         }
     }
-    framebuffer.write_tga_file("framebuffer.tga");
-    drop_zbuffer("zbuffer1.tga", zbuffer, width, height);
+    std::filesystem::create_directories("output");
+    framebuffer.write_tga_file("output/framebuffer.tga");
+    drop_zbuffer("output/zbuffer1.tga", zbuffer, width, height);
 
     std::vector<bool> mask(width * height, false);
     std::vector<double> zbuffer_copy = zbuffer;
@@ -164,9 +166,9 @@ int main(int argc, char** argv) {
                 rasterize(clip, shader, trash);         // rasterize the primitive
             }
         }
-        trash.write_tga_file("shadowmap.tga");
+        trash.write_tga_file("output/shadowmap.tga");
     }
-    drop_zbuffer("zbuffer2.tga", zbuffer, shadoww, shadowh);
+    drop_zbuffer("output/zbuffer2.tga", zbuffer, shadoww, shadowh);
 
     mat<4, 4> N = Viewport * Perspective * ModelView;
 
@@ -192,7 +194,7 @@ int main(int argc, char** argv) {
             maskimg.set(x, y, { 255, 255, 255, 255 });
         }
     }
-    maskimg.write_tga_file("mask.tga");
+    maskimg.write_tga_file("output/mask.tga");
 
     for (int x = 0; x < width; x++) {
         for (int y = 0; y < height; y++) {
@@ -204,7 +206,7 @@ int main(int argc, char** argv) {
             framebuffer.set(x, y, { to_byte(a[0]), to_byte(a[1]), to_byte(a[2]), 255 });
         }
     }
-    framebuffer.write_tga_file("shadow.tga");
+    framebuffer.write_tga_file("output/shadow.tga");
 
     return 0;
 }
