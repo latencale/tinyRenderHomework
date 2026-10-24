@@ -4,6 +4,7 @@
 #include <algorithm>
 #include<limits>
 #include<random>
+#include<filesystem>
 #include "model.h"
 #include "tgaimage.h"
 #include "geometry.h"
@@ -96,7 +97,7 @@ int main(int argc, char** argv) {
                 double d = zbuffer[int(p.x) + int(p.y) * width];//采样点投影到屏幕后的深度
                 if (z + 5 * ao_radius < d) continue;//当前像素的深度远小于采样点投影后的深度，过
                 voters++;
-                vote += d > p.z;//投影到屏幕的采样点的深度 > 采样点的深度
+                vote += d > p.z;//投影到屏幕的采样点的深度 > 采样点的深度,不可见
             }
             double ssao = smoothstep(0, 1, 1 - vote / voters * .4);//计算AO强度
             //被遮挡严重(vote/voters)大,ssao小，变暗
@@ -104,7 +105,9 @@ int main(int argc, char** argv) {
             framebuffer.set(x, y, { to_byte(c[0] * ssao),to_byte(c[1] * ssao),to_byte(c[2] * ssao),c[3] });
         }
     }
-    framebuffer.write_tga_file("framebuffer.tga");
+    // 确保输出目录存在（write_tga_file 内部用 fopen，不会自动建目录）
+    std::filesystem::create_directories("output");
+    framebuffer.write_tga_file("output/framebuffer.tga");
 
     return 0;
 }
